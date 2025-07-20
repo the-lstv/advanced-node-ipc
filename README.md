@@ -45,19 +45,15 @@ const server = new ipc.Server({
 ```
 Client:
 ```javascript
-client.socket.on('connect', () => {
-    console.log('Connected to server');
+// Send a request to the server
+client.request('Hello from client!', (error, response) => {
+    if (error) {
+        console.error('Error in response:', error);
+        return;
+    }
 
-    // Send a request to the server
-    client.request('Hello from client!', (error, response) => {
-        if (error) {
-            console.error('Error in response:', error);
-            return;
-        }
-
-        // Handle the response from the server
-        console.log('Received response:', response);
-    });
+    // Handle the response from the server
+    console.log('Received response:', response);
 });
 ```
 
@@ -79,23 +75,19 @@ const server = new ipc.Server({
 ```
 Client:
 ```javascript
-client.socket.on('connect', () => {
-    // Open a socket channel. This can also be done in the same way both on the server and client.
+client.openSocket(null, (socket) => {
+    // The "socket" object here is the exact same as the one on the server.
 
-    client.openSocket(null, (socket) => {
-        // The "socket" object here is the exact same as the one on the server.
+    console.log('Socket opened:', socket.id);
 
-        console.log('Socket opened:', socket.id);
+    // Send a message to the server
+    socket.send('Hello from client!');
 
-        // Send a message to the server
-        socket.send('Hello from client!');
-
-        // Listen for messages from the server
-        socket.onMessage((message) => {
-            console.log('Received message from server:', message);
-        });
-    })
-});
+    // Listen for messages from the server
+    socket.onMessage((message) => {
+        console.log('Received message from server:', message);
+    });
+})
 ```
 
 
