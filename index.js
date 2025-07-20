@@ -267,10 +267,12 @@ class Client {
 
     awaitConnection() {
         if(this._connected) return Promise.resolve(this);
+        if(this._connectingPromise) return this._connectingPromise;
 
-        return new Promise((resolve, reject) => {
+        this._connectingPromise = new Promise((resolve, reject) => {
             this.socket.on('connect', () => {
                 this._connected = true;
+                this._connectingPromise = null;
                 resolve(this);
             });
 
@@ -279,10 +281,13 @@ class Client {
                 reject(err);
             });
         });
+
+        return this._connectingPromise;
     }
 
     close(){
         if(this.socket) this.socket.end();
+        this.cleanup();
         return true;
     }
 
