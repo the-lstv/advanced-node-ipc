@@ -136,9 +136,25 @@ class SocketConnection {
 
 class Client {
     constructor(socket, options = {}, server = null) {
-        if(typeof socket === "string" && !server) {
+
+        this._connected = server ? true : false;
+
+        if (typeof socket === "string" && !server) {
             this.socket = net.createConnection(socket);
             this.socketPath = socket;
+
+            this._connectingPromise = new Promise((resolve, reject) => {
+                this.socket.on('connect', () => {
+                    this._connected = true;
+                    this._connectingPromise = null;
+                    resolve(this);
+                });
+    
+                this.socket.on('error', (err) => {
+                    this._connected = false;
+                    reject(err);
+                });
+            });
         } else {
             this.socket = socket;
         }
@@ -154,8 +170,6 @@ class Client {
         this.closeListeners = new Map();
 
         this.buffer = "";
-
-        this._connected = server? true: false;
 
         // If the client has a parent server
         if(server instanceof Server) {
@@ -267,21 +281,6 @@ class Client {
 
     awaitConnection() {
         if(this._connected) return Promise.resolve(this);
-        if(this._connectingPromise) return this._connectingPromise;
-
-        this._connectingPromise = new Promise((resolve, reject) => {
-            this.socket.on('connect', () => {
-                this._connected = true;
-                this._connectingPromise = null;
-                resolve(this);
-            });
-
-            this.socket.on('error', (err) => {
-                this._connected = false;
-                reject(err);
-            });
-        });
-
         return this._connectingPromise;
     }
 
