@@ -26,31 +26,20 @@ const fs = require('fs');
 const uuid = (require("uuid")).v4;
 
 /**
- * Represents a request sent to the IPC server.
+ * Base class for both sockets and requests, on both client and server.
  */
-class Request {
-    constructor(client, id, data, type) {
+
+class SocketConnection {
+    constructor(client, id, type, data = null) {
         this.client = client;
         this.socket = client.socket;
         this.id = id;
-        this.data = data;
         this.type = type;
-    }
-}
 
-/**
- * Represents a response from the IPC server.
- */
-class Response {
-    constructor(request) {
-        this.request = request;
-        this.client = request.client;
-        this.socket = request.client.socket;
-        this.id = request.id;
-        this.type = request.type;
+        this.data = data;
 
         if(this.status !== 1) {
-            console.error("Response cannot be created: request socket is closed");
+            console.error("SocketConnection cannot be created: socket is closed");
             return;
         }
     }
@@ -58,7 +47,7 @@ class Response {
     /**
      * Sends data back to the client.
      * @param {any} data - The data to send.
-     * @returns {Response} The response object for chaining.
+     * @returns {SocketConnection} The response object for chaining.
      */
     write(data) {
         if(this.status !== 1) return;
@@ -71,7 +60,7 @@ class Response {
     /**
      * Sends an error back to the client.
      * @param {Error} error - The error to send.
-     * @returns {Response} The response object for chaining.
+     * @returns {SocketConnection} The response object for chaining.
      */
     error(error) {
         if(this.status !== 1) return;
@@ -93,8 +82,16 @@ class Response {
             this.write(data);
         }
 
-        closeConnection(this.client, this.id);
+        Client.closeConnection(this.client, this.id);
         return true;
+    }
+
+    /**
+     * Closes the socket connection.
+     */
+    close() {
+        if(this.status !== 1) return;
+        Client.closeConnection(this.client, this.id);
     }
 
     /**
@@ -104,46 +101,13 @@ class Response {
     get status() {
         return this.client.openSockets.has(this.id) ? 1 : 0;
     }
-}
-
-/**
- * Represents a socket connection in the IPC server, used by both the client and server.
- */
-class SocketClient {
-    constructor(client, id, data, type) {
-        this.client = client;
-        this.socket = client.socket;
-        this.id = id;
-        this.data = data;
-        this.type = type;
-    }
 
     /**
      * Sends data through the socket.
      * @param {any} data - The data to send.
      */
     send(data) {
-        if(this.status !== 1) return;
-
-        this.socket.write(`${this.id} ${this.type} ${JSON.stringify(data)}\n`);
-
-        return this;
-    }
-
-    /**
-     * Closes the socket connection.
-     */
-    close() {
-        if(this.status !== 1) return;
-        closeConnection(this.client, this.id);
-    }
-
-    /**
-     * Gets the status of the socket connection.
-     * @returns {number} The status of the socket (1 for open, 0 for closed).
-     */
-    get status() {
-        return this.client.openSockets.has(this.id) ? 1 : 0;
+        return this.write(data);
     }
 
     /**
@@ -170,9 +134,19 @@ class SocketClient {
  * Both the client and server share the same API.
  */
 
-class IPCClient {
-    constructor(socket, options = {}) {
-        this.socket = socket;
+class Client {
+    constructor(socket, options = {}, server = null) {
+        if(typeof socket === "string" && !server) {
+            this.socket = net.createConnection(socket);
+            this.socketPath = socket;
+        } else {
+            this.socket = socket;
+        }
+
+        if(!this.socket || !(this.socket instanceof net.Socket)) {
+            throw new Error("Invalid socket provided. Must be a net.Socket or a valid socket path.");
+        }
+
         this.options = options;
 
         this.openSockets = new Set();
@@ -181,13 +155,20 @@ class IPCClient {
 
         this.buffer = "";
 
-        this._connected = false;
+        this._connected = server? true: false;
+
+        // If the client has a parent server
+        if(server instanceof Server) {
+            this.server = server;
+            this.id = uuid();
+            this.server.connectedClients.set(this.id, this);
+        }
 
         this.socket.on('error', (err) => {
             // this.socket = null;
             // console.error('Socket error:', err);
             // this.cleanup();
-            if(this.options.onError) {
+            if (this.options.onError) {
                 this.options.onError(err);
             }
         });
@@ -195,7 +176,7 @@ class IPCClient {
         this.socket.on('end', () => {
             this.cleanup();
 
-            if(this.id && this.server) {
+            if (this.id && this.server) {
                 this.server.connectedClients.delete(this.id);
             }
         });
@@ -230,7 +211,7 @@ class IPCClient {
                 // console.log("Received IPC message:", { id, type, data });
 
                 if(type === CLOSE_SOCKET){
-                    closeConnection(this, id, false);
+                    Client.closeConnection(this, id, false);
                     return;
                 }
 
@@ -240,9 +221,9 @@ class IPCClient {
 
                     // We received a request
                     if(!this.options.onRequest) return;
-        
-                    const req = new Request(this, id, data, RESPONSE);
-                    const res = new Response(req);
+
+                    const req = { id, data, type, client: this };
+                    const res = new SocketConnection(this, id, RESPONSE);
 
                     this.options.onRequest(req, res);
 
@@ -274,7 +255,7 @@ class IPCClient {
                     // Otherwise, create a new socket connection
                     if(!this.options.onSocket) return;
 
-                    const socketConnection = new SocketClient(this, id, data, type);
+                    const socketConnection = new SocketConnection(this, id, type, data);
                     if(this.options.onSocket) {
                         this.options.onSocket(socketConnection);
                     }
@@ -346,7 +327,7 @@ class IPCClient {
      * @param {any} [initialPayload=null] - Optional initial data to send with the socket connection.
      * @param {Function} [callback] - Optional callback to handle the socket connection.
      * @param {Object} [options={}] - Optional options for the socket connection.
-     * @returns {Promise<SocketClient>} A promise that resolves with the socket connection.
+     * @returns {Promise<SocketConnection>} A promise that resolves with the socket connection.
      */
     async openSocket(initialPayload = null, callback, options = {}) {
         if(!callback) {
@@ -367,7 +348,7 @@ class IPCClient {
             return;
         }
 
-        const socketClient = new SocketClient(this, id, initialPayload, OPEN_SOCKET);
+        const socketClient = new SocketConnection(this, id, OPEN_SOCKET, initialPayload);
         callback(socketClient);
 
         // If there is initial data, call the listener
@@ -394,38 +375,19 @@ class IPCClient {
         this.openSockets.clear();
         this._connected = false;
     }
-}
 
-
-/**
- * Represents the IPC client that connects to the IPC server.
- * @param {string} socketPath - The path to the IPC socket file.
- * @param {Object} [options={}] - Optional options for the IPC client.
- * @extends IPCClient
- */
-class Client extends IPCClient {
-    constructor(socketPath, options){
-        super(net.createConnection(socketPath), options);
-        this.socketPath = socketPath;
+    static closeConnection(client, id, sendMessage = true) {
+        if(!client.openSockets.has(id)) return;
+    
+        client.openSockets.delete(id);
+        client.closeListeners.delete(id);
+        client.messageListeners.delete(id);
+    
+        if(sendMessage) {
+            client.socket.write(`${id} ${CLOSE_SOCKET}\n`);
+        }
     }
 }
-
-
-/**
- * Class representing a client connected to the IPC server.
- * @extends IPCClient
- * @param {Server} server - The server instance that this client is connected to.
- * @param {Socket} socket - The socket instance for the connection.
- */
-
-class ServerClient extends IPCClient {
-    constructor(server, socket) {
-        super(socket, server.options);
-        this.server = server;
-        this._connected = true;
-    }
-}
-
 
 /** 
  * Represents the IPC server that listens for incoming connections.
@@ -440,10 +402,7 @@ class Server {
         this.connectedClients = new Map();
 
         this.server = net.createServer((socket) => {
-            const client = new ServerClient(this, socket);
-
-            client.id = uuid();
-            this.connectedClients.set(client.id, client);
+            const client = new Client(socket, this.options, this);
 
             if(options.onClient) {
                 options.onClient(client);
@@ -458,18 +417,10 @@ class Server {
             if(callback) callback(path);
         });
     }
-}
 
-function closeConnection(client, id, sendMessage = true) {
-    if(!client.openSockets.has(id)) return;
-
-    client.openSockets.delete(id);
-    client.closeListeners.delete(id);
-    client.messageListeners.delete(id);
-
-    if(sendMessage) {
-        client.socket.write(`${id} ${CLOSE_SOCKET}\n`);
+    close(callback) {
+        this.server.close(callback);
     }
 }
 
-module.exports = { Client, Server, ipc_client: Client, ipc_server: Server }
+module.exports = { Client, Server, SocketConnection, REQUEST, RESPONSE, ERROR_RESPONSE, OPEN_SOCKET, CLOSE_SOCKET, PROTOCOL_VERSION };
