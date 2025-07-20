@@ -57,7 +57,7 @@ client.request('Hello from client!', (error, response) => {
 });
 ```
 
-### 2. Creating a bi-directional socket for:
+### 2. Creating a bi-directional socket (one client can create as many sockets as needed in one connection):
 Server:
 ```javascript
 const server = new ipc.Server({
@@ -75,6 +75,7 @@ const server = new ipc.Server({
 ```
 Client:
 ```javascript
+// The connection can optionally have an initial payload, set to null to disable.
 client.openSocket(null, (socket) => {
     // The "socket" object here is the exact same as the one on the server.
 
@@ -90,12 +91,12 @@ client.openSocket(null, (socket) => {
 })
 ```
 
-
 ---
 
 
+> [!NOTE]
+> An unique feature of this library is that you can simply use the exact same API on the client and server - meaning you can open sockets and create requests from both sides. Here are some examples of that:
 
-An unique feature of this library is that you can simply use the exact same API on the client and server - meaning you can open sockets and create requests from both sides. Here are some examples of that:
 
 ### 3. Creating a request from the server to the client:
 This is done the exact same way as it is done from the client to the server, but simply reversed.<br>
