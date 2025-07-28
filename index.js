@@ -415,7 +415,11 @@ class Server {
     }
 
     listen(path, callback){
-        if (fs.existsSync(path)) fs.unlinkSync(path);
+        try {
+            if (fs.existsSync(path)) fs.unlinkSync(path);
+        } catch (error) {
+            console.error("Error removing existing socket file:", error);
+        }
 
         this.server.listen(path, () => {
             if(callback) callback(path);
